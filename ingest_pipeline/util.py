@@ -1,4 +1,5 @@
 import hashlib
+import itertools
 import tiktoken
 import re
 
@@ -22,7 +23,15 @@ def clean_text(text: str) -> str:
 def get_ids(metadatas):
     return [
         hashlib.md5(
-            f"{metadata['text']}{metadata['name']}{metadata['source']}{metadata['title']}{metadata['chunk']}".encode()
+            f"{metadata['loc']}{metadata['text']}{metadata['chunk']}".encode()
         ).hexdigest()
         for metadata in metadatas
     ]
+
+def chunks(iterable, batch_size=100):
+    """A helper function to break an iterable into chunks of size batch_size."""
+    it = iter(iterable)
+    chunk = tuple(itertools.islice(it, batch_size))
+    while chunk:
+        yield chunk
+        chunk = tuple(itertools.islice(it, batch_size))
