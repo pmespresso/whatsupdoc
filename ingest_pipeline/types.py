@@ -6,6 +6,7 @@ from langchain.schema import Document
 class SitemapLoaderConfig(BaseModel):
     web_path: str
     filter_urls: List[str]
+    other_urls: List[str]
     is_local: bool
     table_name: str
 

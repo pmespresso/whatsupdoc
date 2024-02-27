@@ -1,11 +1,13 @@
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 import os
 from supabase.client import Client, create_client
 from langchain_openai import OpenAIEmbeddings
-from ingest_pipeline.update_docs_rag import load_docs, ingest_data
+from ingest_pipeline.update_docs_rag import ingest_data, load_sitemap, load_recursive_url
 from ingest_pipeline.constants import SITEMAP_URLS
 from ingest_pipeline.util import get_ids
+from typing import List
 import asyncio
 
 
@@ -18,7 +20,7 @@ supabase: Client = create_client(supabase_url, supabase_key)
 embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
 
 
-async def main_async():
+async def main_async(names: List[str], only_other: bool = False, only_main: bool = True, clean_ingest: bool = False):
     # Load documents async and ingest them into the vector store
     raw_documents = []
 
@@ -31,15 +33,21 @@ async def main_async():
 
     executor = ThreadPoolExecutor(max_workers=10)
 
-    for sitemap in SITEMAP_URLS:
-        raw_documents.append(executor.submit(load_docs, sitemap))
+    for sitemap in [sitemap for sitemap in SITEMAP_URLS if sitemap["table_name"] in names]:
+        if only_main:
+            raw_documents.append(executor.submit(load_sitemap, sitemap))
+        elif only_other:
+            raw_documents.append(executor.submit(load_recursive_url, sitemap))
+        else:
+            raw_documents.append(executor.submit(load_sitemap, sitemap))
+            raw_documents.append(executor.submit(load_recursive_url, sitemap))
 
     docs_to_ingest = [future.result() for future in raw_documents]
 
     ingest_futures = []
 
     for doc in docs_to_ingest:
-        asyncio.create_task(ingest_data(doc, table_suffix=table_suffix))
+        asyncio.create_task(ingest_data(data=doc, table_suffix=table_suffix, clean_ingest=clean_ingest))
 
     await asyncio.gather(*ingest_futures)
 
@@ -57,8 +65,21 @@ async def main_async():
     }).eq("environment", other_row).execute()
 
 
-def main():
-    asyncio.run(main_async())
-
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Embed documents from various sources."
+    )
+
+    parser.add_argument("--names", nargs="*", help="Specify a list of the tables to ingest, e.g. vscode_documents")
+
+    parser.add_argument("--only-main", action="store_true", help="Only ingest the main urls from the specified tables")
+    parser.add_argument("--only-other", action="store_true", help="Only ingest the other_urls from the specified tables")
+
+    is_main = True
+
+    while is_main:
+        args = parser.parse_args()
+        
+        asyncio.run(main_async(names=args.names, only_other=args.only_other, only_main=args.only_main))
+
+        is_main = False

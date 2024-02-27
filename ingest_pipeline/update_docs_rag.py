@@ -1,17 +1,19 @@
-from pydantic import BaseModel
-from typing import List, Any
-from langchain.document_loaders.sitemap import SitemapLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from supabase.client import Client, create_client
+from bs4 import BeautifulSoup as Soup, SoupStrainer
+from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 from langchain.vectorstores.supabase import SupabaseVectorStore
+from langchain.utils.html import PREFIXES_TO_IGNORE_REGEX, SUFFIXES_TO_IGNORE_REGEX
+from langchain.document_loaders.sitemap import SitemapLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders.recursive_url_loader import RecursiveUrlLoader
+from langchain_community.document_loaders import ReadTheDocsLoader
 import os
-from dotenv import load_dotenv
-from tqdm import tqdm
+import re
 from supabase.lib.client_options import ClientOptions
+from supabase.client import Client, create_client
 
 from .types import SitemapLoaderConfig, DocumentData
-from .util import tiktoken_len, get_ids, chunks
+from .util import tiktoken_len
 
 load_dotenv()
 
@@ -22,37 +24,98 @@ supabase: Client = create_client(supabase_url=supabase_url, supabase_key=supabas
 
 embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
 
-def load_docs(loaderConfig: SitemapLoaderConfig):
-    # check the last time it was updated in the knowledgebases table, and only ingest if it's been more than 28 days
-    # is_it_a_row_to_update = supabase.table('knowledgebases').select("updated_at").eq("documents_table_name", loaderConfig['table_name']).gte("updated_at", "now() - interval '1 days'").execute()
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=500,
+    chunk_overlap=20,
+    length_function=tiktoken_len,
+    separators=["\n" * i for i in range(0, 43 + 1)] + [" ", ""],
+)
 
-    # if is_it_a_row_to_update.data:
-    #     print(f"Skipping {loaderConfig['table_name']}, it was updated in the last 28 days")
-    #     return
+def metadata_extractor(meta: dict, soup: Soup) -> dict:
+    title = soup.find("title")
+    description = soup.find("meta", attrs={"name": "description"})
+    html = soup.find("html")
+    return {
+        "source": meta["loc"],
+        "title": title.get_text() if title else "",
+        "description": description.get("content", "") if description else "",
+        "language": html.get("lang", "") if html else "",
+        **meta,
+    }
 
+def load_sitemap(loaderConfig: SitemapLoaderConfig):
     sitemaploader = SitemapLoader(
         web_path=loaderConfig['web_path'],
         filter_urls=loaderConfig['filter_urls'],
         is_local=loaderConfig['is_local'],
+         bs_kwargs={
+            "parse_only": SoupStrainer(
+                name=("article", "title", "html", "lang", "content")
+            ),
+        },
+        meta_function=metadata_extractor,
         continue_on_failure=True
     )
 
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=100,
-        length_function=tiktoken_len,
-        separators=["\n" * i for i in range(0, 43 + 1)] + [" ", ""],
-    )
-
     docs = sitemaploader.load_and_split(text_splitter=text_splitter)
+
+    print(f"Loaded {len(docs)}, e.g. {docs[0]}")
+
     table_name = loaderConfig['table_name']
 
     return DocumentData(docs=docs, table_name=table_name)
 
-async def ingest_data(data: DocumentData, table_suffix: str = "blue"):
+def simple_extractor(html: str) -> str:
+    soup = Soup(html, "lxml")
+    return re.sub(r"\n\n+", "\n\n", soup.text).strip()
+
+def load_recursive_url(loaderConfig: SitemapLoaderConfig):
+    docs = []
+
+    for url in loaderConfig['other_urls']:
+        print(f"Loading additional documents from {url}")
+        recursive_url_loader = RecursiveUrlLoader(
+            url=url, max_depth=8,
+            extractor=simple_extractor,
+            prevent_outside=True,
+            use_async=True,
+            timeout=600,
+            # Drop trailing / to avoid duplicate pages.
+            link_regex=(
+                f"href=[\"']{PREFIXES_TO_IGNORE_REGEX}((?:{SUFFIXES_TO_IGNORE_REGEX}.)*?)"
+                r"(?:[\#'\"]|\/[\#'\"])"
+            ),
+            check_response_status=True,
+            exclude_dirs=(
+                "https://api.python.langchain.com/en/latest/_sources",
+                "https://api.python.langchain.com/en/latest/_modules",
+            )
+        ).load()
+
+        print("Loaded.")
+
+        documents = text_splitter.split_documents(recursive_url_loader)
+
+        print("Split.")
+
+        docs = [*docs, *documents]
+        
+        print("length of docs", len(docs))
+
+        table_name = loaderConfig['table_name']
+        print("table_name", table_name)
+    result =  DocumentData(docs=docs, table_name=table_name)
+    print("result", result)
+    return result
+
+async def ingest_data(data: DocumentData, table_suffix: str = "blue", clean_ingest: bool = False):
     print("Ingesting into", table_suffix)
 
     print(f"Ingesting {len(data.docs)} documents into {data.table_name}. ")
+
+    # Drop the table
+    if clean_ingest:
+        supabase.table(f"{data.table_name}_{table_suffix}").delete().neq("content", "null").execute()
 
     vectorstore = SupabaseVectorStore.from_documents(
         client=supabase,
