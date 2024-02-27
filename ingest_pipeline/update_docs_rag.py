@@ -75,7 +75,8 @@ def load_recursive_url(loaderConfig: SitemapLoaderConfig):
     for url in loaderConfig['other_urls']:
         print(f"Loading additional documents from {url}")
         recursive_url_loader = RecursiveUrlLoader(
-            url=url, max_depth=8,
+            url=url, 
+            max_depth=8,
             extractor=simple_extractor,
             prevent_outside=True,
             use_async=True,
@@ -108,14 +109,10 @@ def load_recursive_url(loaderConfig: SitemapLoaderConfig):
     print("result", result)
     return result
 
-async def ingest_data(data: DocumentData, table_suffix: str = "blue", clean_ingest: bool = False):
+async def ingest_data(data: DocumentData, table_suffix: str = "blue"):
     print("Ingesting into", table_suffix)
 
     print(f"Ingesting {len(data.docs)} documents into {data.table_name}. ")
-
-    # Drop the table
-    if clean_ingest:
-        supabase.table(f"{data.table_name}_{table_suffix}").delete().neq("content", "null").execute()
 
     vectorstore = SupabaseVectorStore.from_documents(
         client=supabase,
