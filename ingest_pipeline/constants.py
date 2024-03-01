@@ -15,35 +15,35 @@ SITEMAP_URLS: List[SitemapLoaderConfig] = [
         "is_local": False
     },
     {
-        "web_path": "./langchainjs-sitemap.xml",
+        "web_path": "https://js.langchain.com/sitemap.xml",
         "table_name": "langchainjs_documents",
-        "other_urls": ["https://www.pinecone.io/learn/series/langchain/langchain-expression-language/", "https://api.python.langchain.com/en/latest/langchain_api_reference.html"],
-        "filter_urls": [],
-        "is_local": True
+        "other_urls": ["https://www.pinecone.io/learn/series/langchain/langchain-expression-language/", "https://js.langchain.com/docs/guides"],
+        "filter_urls": ["^https:\/\/js\.langchain\.com\/docs\/modules", "^https:\/\/js\.langchain\.com\/docs\/get_started", "^https:\/\/js\.langchain\.com\/docs\/expression_language", "^https:\/\/js\.langchain\.com\/docs\/security"],
+        "is_local": False
     },
     {
         "web_path": "https://python.langchain.com/sitemap.xml",
-        "filter_urls":["^https:\/\/python\.langchain\.com\/docs", "^https:\/\/python\.langchain\.com\/cookbook", "^https:\/\/python\.langchain\.com\/api"],
-        "other_urls": ["https://www.pinecone.io/learn/series/langchain/langchain-expression-language/", "https://api.python.langchain.com/en/latest/langchain_api_reference.html"],
+        "filter_urls":["^https:\/\/python\.langchain\.com\/docs\/modules", "^https:\/\/python\.langchain\.com\/docs\/get_started", "^https:\/\/python\.langchain\.com\/cookbook", "^https:\/\/python\.langchain\.com\/api"],
+        "other_urls": ["https://www.pinecone.io/learn/series/langchain/langchain-expression-language/", "https://github.com/langchain-ai/langchain/discussions", "https://python.langchain.com/docs"],
         "table_name": "langchain_documents",
         "is_local": False
     },
-    # {
-    #     "web_path": "https://stripe.com/sitemap/partition-2.xml",
-    #     "filter_urls":["^https:\/\/stripe\.com\/docs"],
-    #     "table_name": "stripe_documents",
-    #     "is_local": False
-    # },
-    # {
-    #     "web_path": "https://stripe.com/sitemap/partition-1.xml",
-    #     "filter_urls":["^https:\/\/stripe\.com\/docs"],
-    #     "table_name": "stripe_documents",
-    #     "is_local": False
-    # },
-    # {
-    #     "web_path": "https://developer.paddle.com/sitemap.xml",
-    #     "filter_urls":[],
-    #     "table_name": "paddle_documents",
-    #     "is_local": False
-    # }
+    {
+        "web_path": "https://stripe.com/sitemap/partition-2.xml",
+        "filter_urls":["^https:\/\/stripe\.com\/docs"],
+        "table_name": "stripe_documents",
+        "is_local": False
+    },
+    {
+        "web_path": "https://stripe.com/sitemap/partition-1.xml",
+        "filter_urls":["^https:\/\/stripe\.com\/docs"],
+        "table_name": "stripe_documents",
+        "is_local": False
+    },
+    {
+        "web_path": "https://developer.paddle.com/sitemap.xml",
+        "filter_urls":[],
+        "table_name": "paddle_documents",
+        "is_local": False
+    }
 ]

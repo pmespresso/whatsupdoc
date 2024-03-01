@@ -16,7 +16,7 @@ supabase_url = os.environ.get("SUPABASE_URL")
 supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
-embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
+embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
 
 
 async def main_async(names: List[str], only_other: bool = False, only_sitemap: bool = True, clean_ingest: bool = False):
@@ -24,19 +24,14 @@ async def main_async(names: List[str], only_other: bool = False, only_sitemap: b
     # Load documents async and ingest them into the vector store
     raw_documents = []
 
-    # Figure out whether to ingest to blue or green table
-    table_suffix_response = supabase.table('ingestion_metadata').select("*").eq("active", False).execute()
-
-    table_suffix = table_suffix_response.data[0].get("environment")
-
-    print(f"Ingesting into {table_suffix} ")
-
     executor = ThreadPoolExecutor(max_workers=10)
 
     for sitemap in [sitemap for sitemap in SITEMAP_URLS if sitemap["table_name"] in names]:
         # Drop the table
         if clean_ingest:
-            supabase.table(f"{sitemap['table_name']}_{table_suffix}").delete().neq("content", "null").execute()
+            # delete this row where content is not null
+            print(f"Cleaning table {sitemap['table_name']}")
+            supabase.table(sitemap['table_name']).delete().neq("content", "null").execute()
 
         if only_sitemap:
             raw_documents.append(executor.submit(load_sitemap, sitemap))
@@ -51,22 +46,9 @@ async def main_async(names: List[str], only_other: bool = False, only_sitemap: b
     ingest_futures = []
 
     for doc in docs_to_ingest:
-        asyncio.create_task(ingest_data(data=doc, table_suffix=table_suffix))
+        asyncio.create_task(ingest_data(data=doc))
 
     await asyncio.gather(*ingest_futures)
-
-    # At the end of the ingestion process, update the ingestion_metadata
-    table_update_response = supabase.table('ingestion_metadata').update({
-        "active": True,
-        "updated_at": "now()"
-    }).eq("environment", table_suffix).execute()
-
-    # Update the other row to active: False
-    other_row = "green" if table_suffix == "blue" else "blue"
-
-    other_table_update_response = supabase.table('ingestion_metadata').update({
-        "active": False
-    }).eq("environment", other_row).execute()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
