@@ -9,12 +9,13 @@ from langchain_community.document_loaders.recursive_url_loader import RecursiveU
 from langchain_community.document_loaders import ReadTheDocsLoader
 from langchain_experimental.text_splitter import SemanticChunker
 
+
 import os
 import re
 from supabase.lib.client_options import ClientOptions
 from supabase.client import Client, create_client
 
-from .types import SitemapLoaderConfig, DocumentData
+from .types import LoaderConfig, DocumentData
 from .util import tiktoken_len
 
 load_dotenv()
@@ -25,16 +26,6 @@ client_options = ClientOptions(postgrest_client_timeout=None)
 supabase: Client = create_client(supabase_url=supabase_url, supabase_key=supabase_key, options=client_options)
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
-
-# text_splitter = RecursiveCharacterTextSplitter(
-#     chunk_size=1000,
-#     chunk_overlap=200,
-#     length_function=tiktoken_len,
-#     separators=["\n" * i for i in range(0, 43 + 1)] + [" ", ""],
-# )
-text_splitter = SemanticChunker(embeddings=embeddings)
-
-
 
 def metadata_extractor(meta: dict, soup: Soup) -> dict:
     title = soup.find("title")
@@ -48,11 +39,10 @@ def metadata_extractor(meta: dict, soup: Soup) -> dict:
         **meta,
     }
 
-def load_sitemap(loaderConfig: SitemapLoaderConfig):
+def load_sitemap(loaderConfig: LoaderConfig):
     sitemaploader = SitemapLoader(
-        web_path=loaderConfig['web_path'],
-        filter_urls=loaderConfig['filter_urls'],
-        is_local=loaderConfig['is_local'],
+        web_path=loaderConfig['sitemap_url'],
+        filter_urls=loaderConfig['sitemap_filter_urls'],
          bs_kwargs={
             "parse_only": SoupStrainer(
                 name=("article")
@@ -62,25 +52,99 @@ def load_sitemap(loaderConfig: SitemapLoaderConfig):
         continue_on_failure=True
     )
 
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
+        length_function=tiktoken_len,
+        separators=["\n" * i for i in range(0, 43 + 1)] + [" ", ""],
+    )
+
     docs = sitemaploader.load_and_split(text_splitter=text_splitter)
 
     print(f"Loaded {len(docs)}, e.g. {docs[0]}")
 
-    table_name = loaderConfig['table_name']
+    table_name = loaderConfig['documents_table_name']
 
     return DocumentData(docs=docs, table_name=table_name)
 
+def guess_content_type(content: str) -> str:
+    if content.lstrip().startswith("<?xml") or ":XML" in content:
+        return "xml"
+    else:
+        return "html"
+
 def simple_extractor(html: str) -> str:
-    soup = Soup(html, "lxml", parse_only=SoupStrainer(name=("article", "main", "title", "content", "markdown")))
+    content_type = guess_content_type(html)
+    parser = "lxml-xml" if content_type == "xml" else "lxml"
+    soup = Soup(html, parser, parse_only=SoupStrainer(name=("article", "main", "title", "content", "theme-doc-markdown", "markdown", "main-content", "body-content", "body")))
     return re.sub(r"\n\n+", "\n\n", soup.text).strip()
 
-def load_recursive_url(loaderConfig: SitemapLoaderConfig):
+def load_github_discussions(loaderConfig: LoaderConfig):
+    print(f"Loading additional documents from {loaderConfig['github_discussions_url']}")
+    recursive_url_loader = RecursiveUrlLoader(
+        url=loaderConfig['github_discussions_url'],
+        max_depth=8,
+        extractor=simple_extractor,
+        prevent_outside=True,
+        use_async=True,
+        timeout=600,
+        # Drop trailing / to avoid duplicate pages.
+        link_regex=(
+            f"href=[\"']{PREFIXES_TO_IGNORE_REGEX}((?:{SUFFIXES_TO_IGNORE_REGEX}.)*?)"
+            r"(?:[\#'\"]|\/[\#'\"])"
+        ),
+        check_response_status=True,
+    ).load()
+
+    print("Loaded.")
+
+    text_splitter = SemanticChunker(embeddings=embeddings)
+
+    documents = text_splitter.split_documents(recursive_url_loader)
+
+    print("Split.")
+
+    return DocumentData(docs=documents, table_name=loaderConfig['documents_table_name'])
+
+def load_documentation_url(loaderConfig: LoaderConfig):
+    print(f"Loading additional documents from {loaderConfig['documentation_url']}")
+    recursive_url_loader = RecursiveUrlLoader(
+        url=loaderConfig['documentation_url'],
+        max_depth=8,
+        extractor=simple_extractor,
+        prevent_outside=True,
+        use_async=True,
+        timeout=600,
+        # Drop trailing / to avoid duplicate pages.
+        link_regex=(
+            f"href=[\"']{PREFIXES_TO_IGNORE_REGEX}((?:{SUFFIXES_TO_IGNORE_REGEX}.)*?)"
+            r"(?:[\#'\"]|\/[\#'\"])"
+        ),
+        check_response_status=True,
+    ).load()
+
+    print("Loaded.")
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=512,
+        chunk_overlap=50,
+        length_function=tiktoken_len,
+        separators=["\n" * i for i in range(0, 43 + 1)] + [" ", ""],
+    )
+
+    documents = text_splitter.split_documents(recursive_url_loader)
+
+    print("Split.")
+
+    return DocumentData(docs=documents, table_name=loaderConfig['documents_table_name'])
+
+def load_other_urls(loaderConfig: LoaderConfig):
     docs = []
 
     # check if loaderConfig has a key other_urls
     if 'other_urls' not in loaderConfig:
         print("No other_urls in loaderConfig")
-        return
+        return DocumentData(docs=docs, table_name=loaderConfig['documents_table_name'])
 
     for url in loaderConfig['other_urls']:
         print(f"Loading additional documents from {url}")
@@ -106,6 +170,8 @@ def load_recursive_url(loaderConfig: SitemapLoaderConfig):
 
         print("Loaded.")
 
+        text_splitter = SemanticChunker(embeddings=embeddings)
+
         documents = text_splitter.split_documents(recursive_url_loader)
 
         print("Split.")
@@ -114,9 +180,7 @@ def load_recursive_url(loaderConfig: SitemapLoaderConfig):
         
         print("length of docs", len(docs))
 
-        table_name = loaderConfig['table_name']
-        print("table_name", table_name)
-    result =  DocumentData(docs=docs, table_name=table_name)
+    result = DocumentData(docs=docs, table_name=loaderConfig['documents_table_name'])
     print("result", result)
     return result
 
@@ -129,7 +193,8 @@ async def ingest_data(data: DocumentData):
         embedding=embeddings,
         table_name=data.table_name,
         documents=data.docs,
-        query_name=f"match_{data.table_name}"
+        query_name=f"match_{data.table_name}",
+        chunk_size=500
     )
 
     # set the updated_at column to the current time

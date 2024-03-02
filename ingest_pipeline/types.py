@@ -3,12 +3,15 @@ from typing import List, Any, Optional
 from langchain.schema import Document
 
 
-class SitemapLoaderConfig(BaseModel):
-    web_path: str
-    filter_urls: List[str]
+class LoaderConfig(BaseModel):
+    display_name: str
+    documents_table_name: str
+    documentation_url: str
+    github_discussion_url: Optional[str]
+    logo_url: Optional[str]
+    sitemap_url: Optional[str]
+    sitemap_filter_urls: Optional[List[str]]
     other_urls: Optional[List[str]]
-    is_local: bool
-    table_name: str
 
 
 class DocumentData(BaseModel):
